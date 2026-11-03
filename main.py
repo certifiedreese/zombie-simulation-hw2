@@ -10,7 +10,7 @@ from storage import InMemoryStore, SQLiteStore
 from simulation import Simulation, WIDTH, HEIGHT, FPS, TIME_LIMIT
 
 # ===== CHOOSE THE STORAGE (the only line to change) =====
-store = SQLiteStore()
+store = InMemoryStore()
 
 sim = Simulation(store)
 sim.new_game()
