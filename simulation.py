@@ -12,8 +12,8 @@ import math
 
 # ---------- SETTINGS ----------
 WIDTH, HEIGHT = 800, 600
-NUM_HUMANS = 20
-NUM_ZOMBIES = 3
+NUM_HUMANS = 1000
+NUM_ZOMBIES = 50
 FIGHT_CHANCE = 0.4  # chance a human kills the zombie instead of being infected
 TIME_LIMIT = 45     # seconds until rescue arrives
 FPS = 60

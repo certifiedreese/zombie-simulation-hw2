@@ -10,7 +10,7 @@ from storage import InMemoryStore, SQLiteStore
 from simulation import Simulation, WIDTH, HEIGHT, FPS, TIME_LIMIT
 
 # ===== CHOOSE THE STORAGE (the only line to change) =====
-store = InMemoryStore()
+store = SQLiteStore()
 
 sim = Simulation(store)
 sim.new_game()
@@ -44,8 +44,8 @@ while running:
     for z in zombies:
         pygame.draw.circle(screen, (80, 220, 80), (int(z.x), int(z.y)), 7)
 
-    counter = font.render(
-        f"Humans: {len(humans)}   Zombies: {len(zombies)}   Time: {sim.seconds()}/{TIME_LIMIT}s",
+        counter = font.render(
+        f"Humans: {len(humans)}   Zombies: {len(zombies)}   Time: {sim.seconds()}/{TIME_LIMIT}s   FPS: {clock.get_fps():.0f}",
         True, (255, 255, 255))
     screen.blit(counter, (10, 10))
 
