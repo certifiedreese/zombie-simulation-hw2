@@ -56,3 +56,22 @@ instead of all 1000, which roughly doubled the FPS for both storage options.
 | 10000/500 | InMemory | Parallel | 135.3 | 52.8 | 27.8 | 0 |
 | 10000/500 | SQLite | Serial | 322.8 | 127.3 | 53.8 | 0 |
 | 10000/500 | SQLite | Parallel | 222.0 | 52.5 | 28.1 | 0 |
+### Summary
+- Correctness: "humans left" is identical for serial and parallel in every
+  test, so parallelism changed the speed but not the simulation's results.
+- Small scale (1,000/50): parallel was slower (11.1 vs 13.9 ms per frame),
+  because sending data to 4 worker processes costs more than the work saved.
+- Medium scale (5,000/250, InMemory): parallel was about 3.3x faster for
+  neighbor-finding, 2.5x for event detection, and 2.1x for the whole frame.
+- Large scale (10,000/500, SQLite): about 2.4x faster for neighbor-finding
+  and 1.9x for event detection. The InMemory serial time at this size
+  (304.6 ms) is much higher than SQLite serial (127.3 ms) for identical
+  neighbor-finding work, so it is likely affected by overhead outside the
+  algorithm, possibly Python garbage collection in the main process.
+- Speedups stay below 4x with 4 workers because of fixed overhead (copying
+  positions to workers, each worker building its own grid, collecting results).
+- The database adds a large serial cost (about 73 ms per frame at 5,000
+  with parallel finding), which limits whole-frame speedup (Amdahl's law).
+- Limitation: the map size is fixed, so larger tests are much more crowded
+  and infection spreads faster (all humans were gone within 50 frames at
+  10,000). Scaling the map with the agent count would keep tests comparable.
