@@ -16,7 +16,7 @@ def main():
     store = InMemoryStore()
 
     # ===== CHOOSE THE NEIGHBOR-FINDING MODE =====
-    finder = SerialFinder()
+    finder = ParallelFinder(workers=4) 
 
     sim = Simulation(store, finder)
     sim.new_game()

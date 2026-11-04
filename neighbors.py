@@ -1,74 +1,109 @@
 # ============================================================
-# neighbors.py - Neighbor-finding layer
+# neighbors.py - Neighbor-finding and event detection layer
 #
-# Finds which human each zombie should chase. Two versions follow
-# the same rules (a find() method), so the simulation can use either:
+# Two jobs, both using a spatial grid:
+#   find()          - which human each zombie should chase
+#   find_contacts() - which humans each zombie is touching (fight events)
+#
+# Two versions follow the same rules, so the simulation can use either:
 #   SerialFinder   - one CPU core does all the work
 #   ParallelFinder - the zombies are split across several CPU cores
 # ============================================================
 
 import math
 import multiprocessing
-from simulation import CELL_SIZE, VISION_RADIUS
+from simulation import CELL_SIZE, VISION_RADIUS, TOUCH_DISTANCE
 
 
-def find_nearest(zombie_positions, human_positions):
-    """For each zombie, return the index of the nearest human in
-    vision range, or -1 if nobody is in sight. Uses a spatial grid."""
-    # Build a grid: (column, row) -> list of human indexes in that square
+# ---------- SPATIAL GRID HELPERS ----------
+def build_grid(positions):
+    """(column, row) -> list of indexes of the agents in that square."""
     grid = {}
-    for i, (hx, hy) in enumerate(human_positions):
-        key = (int(hx // CELL_SIZE), int(hy // CELL_SIZE))
+    for i, (x, y) in enumerate(positions):
+        key = (int(x // CELL_SIZE), int(y // CELL_SIZE))
         grid.setdefault(key, []).append(i)
+    return grid
 
-    r = math.ceil(VISION_RADIUS / CELL_SIZE)  # squares to look out in each direction
+
+def nearby(grid, x, y, radius):
+    """Every index in the squares within `radius` pixels of (x, y)."""
+    r = math.ceil(radius / CELL_SIZE)
+    cx, cy = int(x // CELL_SIZE), int(y // CELL_SIZE)
+    for gx in range(cx - r, cx + r + 1):
+        for gy in range(cy - r, cy + r + 1):
+            yield from grid.get((gx, gy), ())
+
+
+# ---------- THE WORK (runs on one core, or on each worker) ----------
+def find_nearest(zombie_positions, human_positions):
+    """For each zombie: the index of the nearest human in vision range, or -1."""
+    grid = build_grid(human_positions)
     results = []
     for (zx, zy) in zombie_positions:
-        cx, cy = int(zx // CELL_SIZE), int(zy // CELL_SIZE)
         best = -1
         best_dist = VISION_RADIUS
-        for gx in range(cx - r, cx + r + 1):
-            for gy in range(cy - r, cy + r + 1):
-                for i in grid.get((gx, gy), ()):
-                    hx, hy = human_positions[i]
-                    d = math.hypot(hx - zx, hy - zy)
-                    if d < best_dist:
-                        best = i
-                        best_dist = d
+        for i in nearby(grid, zx, zy, VISION_RADIUS):
+            hx, hy = human_positions[i]
+            d = math.hypot(hx - zx, hy - zy)
+            if d < best_dist:
+                best = i
+                best_dist = d
         results.append(best)
     return results
 
 
+def detect_contacts(zombie_positions, human_positions):
+    """For each zombie: a list of the indexes of every human it is touching."""
+    grid = build_grid(human_positions)
+    results = []
+    for (zx, zy) in zombie_positions:
+        touching = []
+        for i in nearby(grid, zx, zy, TOUCH_DISTANCE):
+            hx, hy = human_positions[i]
+            if math.hypot(hx - zx, hy - zy) < TOUCH_DISTANCE:
+                touching.append(i)
+        results.append(touching)
+    return results
+
+
+# ---------- SERIAL VERSION ----------
 class SerialFinder:
     """One CPU core handles every zombie."""
 
     def find(self, zombie_positions, human_positions):
         return find_nearest(zombie_positions, human_positions)
 
+    def find_contacts(self, zombie_positions, human_positions):
+        return detect_contacts(zombie_positions, human_positions)
+
     def close(self):
-        pass  # nothing to shut down
+        pass
 
 
+# ---------- PARALLEL VERSION ----------
 class ParallelFinder:
     """Splits the zombies into chunks, one chunk per CPU core."""
 
     def __init__(self, workers=4):
         self.workers = workers
-        # A pool of worker processes, created once and reused every frame
-        self.pool = multiprocessing.Pool(workers)
+        self.pool = multiprocessing.Pool(workers)  # created once, reused every frame
 
-    def find(self, zombie_positions, human_positions):
+    def _run(self, work, zombie_positions, human_positions):
+        # Split the zombies into chunks, run `work` on every chunk at the
+        # same time, then put the results back together in the original order
         if not zombie_positions:
             return []
-        # Split the zombies into one chunk per worker
         size = math.ceil(len(zombie_positions) / self.workers)
         chunks = [zombie_positions[i:i + size]
                   for i in range(0, len(zombie_positions), size)]
-        # Every worker searches its own chunk AT THE SAME TIME
-        parts = self.pool.starmap(find_nearest,
-                                  [(chunk, human_positions) for chunk in chunks])
-        # Put the results back together, in the original order
-        return [t for part in parts for t in part]
+        parts = self.pool.starmap(work, [(chunk, human_positions) for chunk in chunks])
+        return [r for part in parts for r in part]
+
+    def find(self, zombie_positions, human_positions):
+        return self._run(find_nearest, zombie_positions, human_positions)
+
+    def find_contacts(self, zombie_positions, human_positions):
+        return self._run(detect_contacts, zombie_positions, human_positions)
 
     def close(self):
         self.pool.close()

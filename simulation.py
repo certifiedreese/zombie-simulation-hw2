@@ -3,8 +3,8 @@
 #
 # All the game RULES live here: how agents move, chase, and fight.
 # State is read and written ONLY through a StateStore, and
-# neighbor-finding is done ONLY through a finder object, so the
-# rules work with any storage option and any finder (serial or parallel).
+# neighbor-finding and event detection are done ONLY through a
+# finder object, so the rules work with any storage and any finder.
 # ============================================================
 
 import random
@@ -20,29 +20,6 @@ FPS = 60
 CELL_SIZE = 50        # size of each grid square, in pixels
 VISION_RADIUS = 100   # how far a zombie can see a human
 TOUCH_DISTANCE = 13   # human radius 6 + zombie radius 7
-
-
-# ---------- SPATIAL GRID (used for fights) ----------
-class SpatialGrid:
-    """Splits the map into squares so agents only check nearby squares."""
-
-    def __init__(self, agents, cell_size=CELL_SIZE):
-        self.cell_size = cell_size
-        self.cells = {}
-        for a in agents:
-            self.cells.setdefault(self.key(a.x, a.y), []).append(a)
-
-    def key(self, x, y):
-        return (int(x // self.cell_size), int(y // self.cell_size))
-
-    def nearby(self, x, y, radius):
-        r = math.ceil(radius / self.cell_size)
-        cx, cy = self.key(x, y)
-        found = []
-        for gx in range(cx - r, cx + r + 1):
-            for gy in range(cy - r, cy + r + 1):
-                found.extend(self.cells.get((gx, gy), []))
-        return found
 
 
 # ---------- HUMAN AGENT ----------
@@ -103,7 +80,6 @@ class Zombie:
         return z
 
     def chase(self, human):
-        # Move toward a target human at a steady speed
         dx = human.x - self.x
         dy = human.y - self.y
         dist = math.hypot(dx, dy)
@@ -112,7 +88,6 @@ class Zombie:
             self.y += dy / dist * self.speed
 
     def wander(self):
-        # Nobody in sight: keep moving and bounce off walls
         self.x += self.dx
         self.y += self.dy
         if self.x < 0 or self.x > WIDTH:
@@ -126,7 +101,6 @@ class Simulation:
     def __init__(self, store, finder):
         # store:  ANY StateStore (in-memory, SQLite, ...)
         # finder: ANY finder (serial or parallel)
-        # The simulation never asks which kind it was given.
         self.store = store
         self.finder = finder
 
@@ -173,9 +147,9 @@ class Simulation:
         # 2) Humans move
         for h in humans:
             h.update()
+        human_positions = [(h.x, h.y) for h in humans]
 
         # 3) NEIGHBOR-FINDING: which human each zombie chases (serial or parallel)
-        human_positions = [(h.x, h.y) for h in humans]
         zombie_positions = [(z.x, z.y) for z in zombies]
         targets = self.finder.find(zombie_positions, human_positions)
         for z, t in zip(zombies, targets):
@@ -184,27 +158,32 @@ class Simulation:
             else:
                 z.wander()
 
-        # 4) Fights: each zombie only checks humans in nearby squares
-        grid = SpatialGrid(humans)
+        # 4) EVENT PROCESSING
+        # 4a) DETECT: which humans each zombie is touching (serial or parallel)
+        zombie_positions = [(z.x, z.y) for z in zombies]  # zombies just moved
+        contacts = self.finder.find_contacts(zombie_positions, human_positions)
+
+        # 4b) RESOLVE: apply the fights one at a time, in order,
+        #     so each human can only be bitten once (no race conditions)
         new_zombies = []
         dead_zombies = []
-        infected = set()
-        for z in zombies:
-            for h in grid.nearby(z.x, z.y, TOUCH_DISTANCE):
-                if h.id in infected:
-                    continue
-                if math.hypot(h.x - z.x, h.y - z.y) < TOUCH_DISTANCE:
-                    if random.random() < FIGHT_CHANCE:
-                        dead_zombies.append(z)
-                        break
-                    else:
-                        infected.add(h.id)
-                        self.store.remove_agent(h.id)
-                        new_zombies.append(Zombie(h.x, h.y))
+        infected = set()  # indexes of humans bitten this frame
+        for z, touching in zip(zombies, contacts):
+            for i in touching:
+                if i in infected:
+                    continue  # already bitten by another zombie this frame
+                if random.random() < FIGHT_CHANCE:
+                    dead_zombies.append(z)  # human wins
+                    break
+                else:
+                    infected.add(i)  # zombie wins: human becomes a zombie
+                    h = humans[i]
+                    self.store.remove_agent(h.id)
+                    new_zombies.append(Zombie(h.x, h.y))
         for z in dead_zombies:
             zombies.remove(z)
             self.store.remove_agent(z.id)
-        humans = [h for h in humans if h.id not in infected]
+        humans = [h for i, h in enumerate(humans) if i not in infected]
 
         # 5) Save the new state back to storage
         for h in humans:
