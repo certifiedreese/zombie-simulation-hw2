@@ -2,61 +2,75 @@
 # main.py - Display layer
 #
 # Opens the window, handles the R key, and draws the agents.
-# This is the ONLY place that chooses which storage to use.
+# This is the ONLY place that chooses the storage and the finder.
 # ============================================================
 
 import pygame
 from storage import InMemoryStore, SQLiteStore
 from simulation import Simulation, WIDTH, HEIGHT, FPS, TIME_LIMIT
+from neighbors import SerialFinder, ParallelFinder
 
-# ===== CHOOSE THE STORAGE (the only line to change) =====
-store = InMemoryStore()
 
-sim = Simulation(store)
-sim.new_game()
+def main():
+    # ===== CHOOSE THE STORAGE =====
+    store = InMemoryStore()
 
-pygame.init()
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Zombie Simulation")
-clock = pygame.time.Clock()
-font = pygame.font.SysFont(None, 28)
-big_font = pygame.font.SysFont(None, 60)
+    # ===== CHOOSE THE NEIGHBOR-FINDING MODE =====
+    finder = SerialFinder()
 
-running = True
-while running:
-    # 1) INPUT
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-            sim.new_game()
+    sim = Simulation(store, finder)
+    sim.new_game()
 
-    # 2) UPDATE: the simulation handles all the rules
-    sim.step()
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Zombie Simulation")
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 28)
+    big_font = pygame.font.SysFont(None, 60)
 
-    # 3) DRAW
-    humans = sim.get_humans()
-    zombies = sim.get_zombies()
+    running = True
+    while running:
+        # 1) INPUT
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                sim.new_game()
 
-    screen.fill((30, 30, 30))
-    for h in humans:
-        pygame.draw.circle(screen, (0, 200, 255), (int(h.x), int(h.y)), 6)
-    for z in zombies:
-        pygame.draw.circle(screen, (80, 220, 80), (int(z.x), int(z.y)), 7)
+        # 2) UPDATE
+        sim.step()
+
+        # 3) DRAW
+        humans = sim.get_humans()
+        zombies = sim.get_zombies()
+
+        screen.fill((30, 30, 30))
+        for h in humans:
+            pygame.draw.circle(screen, (0, 200, 255), (int(h.x), int(h.y)), 6)
+        for z in zombies:
+            pygame.draw.circle(screen, (80, 220, 80), (int(z.x), int(z.y)), 7)
 
         counter = font.render(
-        f"Humans: {len(humans)}   Zombies: {len(zombies)}   Time: {sim.seconds()}/{TIME_LIMIT}s   FPS: {clock.get_fps():.0f}",
-        True, (255, 255, 255))
-    screen.blit(counter, (10, 10))
+            f"Humans: {len(humans)}   Zombies: {len(zombies)}   "
+            f"Time: {sim.seconds()}/{TIME_LIMIT}s   FPS: {clock.get_fps():.0f}",
+            True, (255, 255, 255))
+        screen.blit(counter, (10, 10))
 
-    message = sim.result()
-    if message:
-        text = big_font.render(message, True, (255, 255, 255))
-        screen.blit(text, text.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
-        hint = font.render("Press R to restart", True, (200, 200, 200))
-        screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50)))
+        message = sim.result()
+        if message:
+            text = big_font.render(message, True, (255, 255, 255))
+            screen.blit(text, text.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+            hint = font.render("Press R to restart", True, (200, 200, 200))
+            screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50)))
 
-    pygame.display.flip()
-    clock.tick(FPS)
+        pygame.display.flip()
+        clock.tick(FPS)
 
-pygame.quit()
+    finder.close()  # shut down the worker processes
+    pygame.quit()
+
+
+# Required for multiprocessing on Windows: each worker process re-reads this
+# file, and this line stops the workers from opening their own game windows.
+if __name__ == "__main__":
+    main()

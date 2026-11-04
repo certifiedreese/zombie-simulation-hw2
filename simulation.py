@@ -2,9 +2,9 @@
 # simulation.py - Simulation logic layer
 #
 # All the game RULES live here: how agents move, chase, and fight.
-# This file never keeps state itself. It reads and writes state
-# ONLY through a StateStore, so it works with ANY storage option.
-# It also doesn't use pygame, so the rules don't depend on drawing.
+# State is read and written ONLY through a StateStore, and
+# neighbor-finding is done ONLY through a finder object, so the
+# rules work with any storage option and any finder (serial or parallel).
 # ============================================================
 
 import random
@@ -22,23 +22,21 @@ VISION_RADIUS = 100   # how far a zombie can see a human
 TOUCH_DISTANCE = 13   # human radius 6 + zombie radius 7
 
 
-# ---------- SPATIAL GRID ----------
+# ---------- SPATIAL GRID (used for fights) ----------
 class SpatialGrid:
     """Splits the map into squares so agents only check nearby squares."""
 
     def __init__(self, agents, cell_size=CELL_SIZE):
         self.cell_size = cell_size
-        self.cells = {}  # (column, row) -> list of agents in that square
+        self.cells = {}
         for a in agents:
             self.cells.setdefault(self.key(a.x, a.y), []).append(a)
 
     def key(self, x, y):
-        # Which square a position falls in
         return (int(x // self.cell_size), int(y // self.cell_size))
 
     def nearby(self, x, y, radius):
-        # Return every agent in the squares within `radius` pixels of (x, y)
-        r = math.ceil(radius / self.cell_size)  # how many squares out to look
+        r = math.ceil(radius / self.cell_size)
         cx, cy = self.key(x, y)
         found = []
         for gx in range(cx - r, cx + r + 1):
@@ -50,7 +48,7 @@ class SpatialGrid:
 # ---------- HUMAN AGENT ----------
 class Human:
     def __init__(self):
-        self.id = None  # given by the storage when the human is saved
+        self.id = None
         self.x = random.randint(0, WIDTH)
         self.y = random.randint(0, HEIGHT)
         angle = random.uniform(0, 2 * math.pi)
@@ -87,7 +85,6 @@ class Zombie:
         self.x = x if x is not None else random.randint(0, WIDTH)
         self.y = y if y is not None else random.randint(0, HEIGHT)
         self.speed = 1.5
-        # Wandering direction, used when no human is in sight
         angle = random.uniform(0, 2 * math.pi)
         self.dx = math.cos(angle)
         self.dy = math.sin(angle)
@@ -105,37 +102,33 @@ class Zombie:
         z.speed = data["speed"]
         return z
 
-    def update(self, grid):
-        # Only look at humans in the nearby grid squares
-        closest = None
-        closest_dist = VISION_RADIUS  # ignore anyone farther than vision range
-        for h in grid.nearby(self.x, self.y, VISION_RADIUS):
-            d = math.hypot(h.x - self.x, h.y - self.y)
-            if d < closest_dist:
-                closest = h
-                closest_dist = d
+    def chase(self, human):
+        # Move toward a target human at a steady speed
+        dx = human.x - self.x
+        dy = human.y - self.y
+        dist = math.hypot(dx, dy)
+        if dist > 0:
+            self.x += dx / dist * self.speed
+            self.y += dy / dist * self.speed
 
-        if closest is not None and closest_dist > 0:
-            # Chase the closest human in sight
-            dx = closest.x - self.x
-            dy = closest.y - self.y
-            self.x += dx / closest_dist * self.speed
-            self.y += dy / closest_dist * self.speed
-        else:
-            # Nobody in sight: wander and bounce off walls
-            self.x += self.dx
-            self.y += self.dy
-            if self.x < 0 or self.x > WIDTH:
-                self.dx = -self.dx
-            if self.y < 0 or self.y > HEIGHT:
-                self.dy = -self.dy
+    def wander(self):
+        # Nobody in sight: keep moving and bounce off walls
+        self.x += self.dx
+        self.y += self.dy
+        if self.x < 0 or self.x > WIDTH:
+            self.dx = -self.dx
+        if self.y < 0 or self.y > HEIGHT:
+            self.dy = -self.dy
 
 
 # ---------- THE SIMULATION ----------
 class Simulation:
-    def __init__(self, store):
-        # store can be ANY StateStore. The simulation never asks which kind.
+    def __init__(self, store, finder):
+        # store:  ANY StateStore (in-memory, SQLite, ...)
+        # finder: ANY finder (serial or parallel)
+        # The simulation never asks which kind it was given.
         self.store = store
+        self.finder = finder
 
     def new_game(self):
         self.store.clear()
@@ -177,23 +170,29 @@ class Simulation:
         zombies = self.get_zombies()
         self.store.set_value("frames", self.store.get_value("frames", 0) + 1)
 
-        # 2) Humans move, then we build the grid of where they are now
+        # 2) Humans move
         for h in humans:
             h.update()
+
+        # 3) NEIGHBOR-FINDING: which human each zombie chases (serial or parallel)
+        human_positions = [(h.x, h.y) for h in humans]
+        zombie_positions = [(z.x, z.y) for z in zombies]
+        targets = self.finder.find(zombie_positions, human_positions)
+        for z, t in zip(zombies, targets):
+            if t >= 0:
+                z.chase(humans[t])
+            else:
+                z.wander()
+
+        # 4) Fights: each zombie only checks humans in nearby squares
         grid = SpatialGrid(humans)
-
-        # 3) Zombies chase, using the grid to find nearby humans
-        for z in zombies:
-            z.update(grid)
-
-        # 4) Fights: each zombie only checks humans in its own and neighboring squares
         new_zombies = []
         dead_zombies = []
-        infected = set()  # ids of humans bitten this frame
+        infected = set()
         for z in zombies:
             for h in grid.nearby(z.x, z.y, TOUCH_DISTANCE):
                 if h.id in infected:
-                    continue  # already bitten by another zombie this frame
+                    continue
                 if math.hypot(h.x - z.x, h.y - z.y) < TOUCH_DISTANCE:
                     if random.random() < FIGHT_CHANCE:
                         dead_zombies.append(z)
