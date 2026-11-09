@@ -53,13 +53,12 @@ two parts:
   the same time.
 - **Resolve (one at a time):** the fights are then applied in order.
   This makes sure no human gets bitten twice by two zombies at once.
-
-We use processes instead of threads because Python only lets one
+I used processes instead of threads because Python only lets one
 thread run at a time (the GIL). Separate processes can truly run at
 the same time.
 
 ## Experiments
-We timed each frame (lower is faster) at three sizes, with both
+I timed each frame (lower is faster) at three sizes, with both
 storages and both speed modes. Each test ran 3 times and was averaged.
 Full tables are in `results.md`.
 
