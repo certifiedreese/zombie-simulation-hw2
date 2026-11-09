@@ -69,7 +69,7 @@ Full tables are in `results.md`.
 | 5,000 humans, neighbor-finding (InMemory) | 79.7 ms | 24.3 ms | About 3x faster |
 | 10,000 humans, neighbor-finding (SQLite) | 127.3 ms | 52.5 ms | About 2.4x faster |
 
-### What We Learned
+### What I Learned
 - **Same results:** the number of humans left was the same with one core
   or four, so parallel only changed the speed, not the outcome.
 - **Small sizes:** parallel was slower, because sending work to the cores
